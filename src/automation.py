@@ -9,8 +9,10 @@ Approach:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Dict
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
@@ -33,8 +35,8 @@ FIELD_MAP: Dict[str, str] = {
 
 def _enable_perf_routes(context: BrowserContext) -> None:
     """Block non-essential resources to speed things up."""
-    # Abort images, media, fonts, stylesheets to reduce bandwidth/render time.
-    block_types = {"image", "media", "font", "stylesheet"}
+    # Abort images, media, fonts to reduce bandwidth/render time.
+    block_types = {"image", "media", "font"}
 
     def _route(route):
         if route.request.resource_type in block_types:
@@ -79,20 +81,49 @@ def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = 
             page.set_default_timeout(4000)
 
         log.info("Navigating to rpachallenge.com ...")
-        page.goto("https://rpachallenge.com/", wait_until="domcontentloaded")
+        try:
+            page.goto("https://rpachallenge.com/", wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            # One quick retry if first attempt was slow
+            page.goto("https://rpachallenge.com/", wait_until="domcontentloaded", timeout=20000)
 
         # Start the timed challenge
         page.get_by_role("button", name="Start").click()
 
+        round_timeout = 5000 if perf_mode else 10000
+
         start = time.perf_counter()
         for idx, row in enumerate(rows, start=1):
-            _wait_form_ready(page, timeout_ms=4000 if perf_mode else 10000)
-            _fill_round(page, row, timeout_ms=4000 if perf_mode else 10000)
+            _wait_form_ready(page, timeout_ms=round_timeout)
+            _fill_round(page, row, timeout_ms=round_timeout)
             log.debug("Submitted round %d", idx)
 
         # Proof & result capture
         page.screenshot(path="screenshots/result.png", full_page=True)
         elapsed = time.perf_counter() - start
+
+        # ensure folder exists before writing artifacts
+        Path("screenshots").mkdir(exist_ok=True)
+
+        # one-line summary that shows even when perf mutes INFO logs
+        summary = (
+            f"OK: rounds={len(rows)} elapsed={elapsed:.3f}s headless={headless} perf={perf_mode}"
+        )
+        (log.warning if perf_mode else log.info)(summary)
+
+        # write a tiny run report for CI/manual verification
+        with open("screenshots/run_summary.json", "w") as f:
+            json.dump(
+                {
+                    "ok": True,
+                    "rounds": len(rows),
+                    "elapsed_sec": round(elapsed, 3),
+                    "headless": headless,
+                    "perf": perf_mode,
+                },
+                f,
+                indent=2,
+            )
 
         # Try to log the result text if present
         try:
