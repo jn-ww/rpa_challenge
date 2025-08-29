@@ -1,0 +1,8 @@
+.venv
+.git
+__pycache__/
+*.pyc
+screenshots/
+playwright-report/
+test-results/
+
