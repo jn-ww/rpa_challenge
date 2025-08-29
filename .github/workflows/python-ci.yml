@@ -38,10 +38,10 @@ jobs:
         run: |
           pip install -r requirements.txt
           python -m playwright install --with-deps
-      - name: Run challenge (headless, perf) on sample data
+      - name: Run challenge (headless) on sample data
         run: |
           mkdir -p screenshots
-          python -m src.main --file data/sample.csv --headless --perf --log-level WARNING
+          python -m src.main --file data/sample.csv --headless --log-level WARNING
           [ -f screenshots/run_summary.json ] && cat screenshots/run_summary.json || true
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
