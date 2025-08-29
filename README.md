@@ -1,5 +1,7 @@
 # Digital Workforce – Python RPA Challenge
 
+![CI (Python + Playwright)](https://github.com/jn-ww/rpa_challenge/actions/workflows/python-ci.yml/badge.svg)
+
 Automation solution for the **Input Forms** challenge at [rpachallenge.com](https://rpachallenge.com/).  
 Implements reliable web automation in **Python 3.10+** with **Playwright**.  
 
