@@ -13,15 +13,24 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import (
+    BrowserContext,
+    Page,
+    sync_playwright,
+)
+from playwright.sync_api import (
+    TimeoutError as PWTimeoutError,
+)
 
 from src.utils import read_rows
 
 log = logging.getLogger(__name__)
 
-# Map canonical spreadsheet columns -> ng-reflect-name attribute values on inputs
+URL = "https://rpachallenge.com/"
+
+# Spreadsheet header -> ng-reflect-name (stable, resists shuffle)
 FIELD_MAP: Dict[str, str] = {
     "First Name": "labelFirstName",
     "Last Name": "labelLastName",
@@ -34,104 +43,105 @@ FIELD_MAP: Dict[str, str] = {
 
 
 def _enable_perf_routes(context: BrowserContext) -> None:
-    """Block non-essential resources to speed things up."""
-    # Abort images, media, fonts to reduce bandwidth/render time.
-    block_types = {"image", "media", "font"}
-
-    def _route(route):
-        if route.request.resource_type in block_types:
-            return route.abort()
-        return route.continue_()
-
-    context.route("**/*", _route)
-
-
-def _wait_form_ready(page: Page, timeout_ms: int) -> None:
-    # Wait until at least one known input is visible; form shuffles each round.
-    page.wait_for_selector('input[ng-reflect-name="labelFirstName"]', timeout=timeout_ms)
+    """Block heavy resources to speed things up (keep CSS for layout)."""
+    block = {"image", "media", "font"}
+    context.route(
+        "**/*",
+        lambda route: route.abort() if route.request.resource_type in block else route.continue_(),
+    )
 
 
 def _fill_round(page: Page, row: Dict[str, str], timeout_ms: int) -> None:
+    """Fill one round and click Submit; caller may wait for the next round if needed."""
+    # Pre-cache locators for slight speedup/clarity
+    loc = {k: page.locator(f'input[ng-reflect-name="{v}"]') for k, v in FIELD_MAP.items()}
     for col, reflect in FIELD_MAP.items():
         value = (row.get(col) or "").strip()
-        if not value:
-            continue
-        locator = page.locator(f'input[ng-reflect-name="{reflect}"]')
-        locator.wait_for(state="visible", timeout=timeout_ms)
-        locator.fill(value)
+        if value:
+            loc[col].fill(value, timeout=timeout_ms)
     page.get_by_role("button", name="Submit").click()
 
+    # wait for next round (except caller can skip on last if you prefer)
+    page.wait_for_function(
+        '() => (document.querySelector(\'input[ng-reflect-name="labelFirstName"]\')?.value || "") === ""',
+        timeout=timeout_ms,
+    )
 
-def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = False) -> None:
-    """Run the rpachallenge.com input forms challenge end-to-end."""
-    rows = list(read_rows(file_path))
+
+def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = False) -> Dict:
+    """Run the rpachallenge.com Input Forms challenge end-to-end and return a summary."""
+    rows: List[Dict[str, str]] = list(read_rows(file_path))
     if not rows:
         raise SystemExit(f"No rows found in {file_path}")
 
-    log.info("Launching browser (headless=%s, perf=%s) ...", headless, perf_mode)
+    round_timeout = 5000 if perf_mode else 10000
+    Path("screenshots").mkdir(exist_ok=True)
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        context = browser.new_context()
+        context = browser.new_context(viewport={"width": 1024, "height": 768})
         if perf_mode:
             _enable_perf_routes(context)
-            context.set_default_timeout(4000)  # be a bit stricter in perf mode
+            log.warning("PERF mode: blocking images/media/fonts; tighter element waits")
+
         page = context.new_page()
-        # Slightly lower default if perf-mode; otherwise keep Playwright default (30s)
-        if perf_mode:
-            page.set_default_timeout(4000)
 
-        log.info("Navigating to rpachallenge.com ...")
+        # Try normal DOMContentLoaded; if slow, retry with commit + Wait for Start
         try:
-            page.goto("https://rpachallenge.com/", wait_until="domcontentloaded", timeout=15000)
-        except Exception:
-            # One quick retry if first attempt was slow
-            page.goto("https://rpachallenge.com/", wait_until="domcontentloaded", timeout=20000)
+            page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+        except PWTimeoutError:
+            log.warning("Navigation slow; retrying with commit + Start wait")
+            page.goto(URL, wait_until="commit", timeout=45000)
+            page.get_by_role("button", name="Start").wait_for(timeout=30000)
 
-        # Start the timed challenge
+        # Ensure Start is visible then begin
         page.get_by_role("button", name="Start").click()
 
-        round_timeout = 5000 if perf_mode else 10000
-
+        # Start measuring at first round; stop at final Submit
         start = time.perf_counter()
-        for idx, row in enumerate(rows, start=1):
-            _wait_form_ready(page, timeout_ms=round_timeout)
+        for i, row in enumerate(rows, 1):
             _fill_round(page, row, timeout_ms=round_timeout)
-            log.debug("Submitted round %d", idx)
-
-        # Proof & result capture
-        page.screenshot(path="screenshots/result.png", full_page=True)
+            # After submit, wait until first-name clears (next round ready), except after last
+            if i != len(rows):
+                page.wait_for_function(
+                    '() => (document.querySelector(\'input[ng-reflect-name="labelFirstName"]\')?.value || "") === ""',
+                    timeout=round_timeout,
+                )
         elapsed = time.perf_counter() - start
 
-        # ensure folder exists before writing artifacts
-        Path("screenshots").mkdir(exist_ok=True)
+        # Screenshot of results
+        page.screenshot(path="screenshots/result.png", full_page=True)
 
-        # one-line summary that shows even when perf mutes INFO logs
-        summary = (
-            f"OK: rounds={len(rows)} elapsed={elapsed:.3f}s headless={headless} perf={perf_mode}"
-        )
-        (log.warning if perf_mode else log.info)(summary)
-
-        # write a tiny run report for CI/manual verification
-        with open("screenshots/run_summary.json", "w") as f:
-            json.dump(
-                {
-                    "ok": True,
-                    "rounds": len(rows),
-                    "elapsed_sec": round(elapsed, 3),
-                    "headless": headless,
-                    "perf": perf_mode,
-                },
-                f,
-                indent=2,
-            )
-
-        # Try to log the result text if present
+        # Try to read the site's banner time (nice to report)
+        site_timer = ""
         try:
-            msg = page.get_by_text("Congratulations", exact=False).first
-            if msg.is_visible():
-                log.info("Result: %s", msg.inner_text())
+            txt = page.locator(".message2, .congratulations").first.text_content(timeout=2000)
+            site_timer = (txt or "").strip()
         except Exception:
             pass
 
-        log.info("Completed all rounds in %.3f s", elapsed)
         browser.close()
+
+    summary = {
+        "ok": True,
+        "rounds": len(rows),
+        "elapsed_sec": round(elapsed, 3),
+        "headless": headless,
+        "perf": perf_mode,
+        "site_timer": site_timer,
+    }
+
+    # In perf mode, print at WARNING so it shows even when INFO is muted
+    (log.warning if perf_mode else log.info)(
+        'OK: rounds=%d elapsed=%.3fs headless=%s perf=%s site="%s"',
+        summary["rounds"],
+        summary["elapsed_sec"],
+        headless,
+        perf_mode,
+        site_timer,
+    )
+
+    with open("screenshots/run_summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+
+    return summary
