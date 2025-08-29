@@ -48,6 +48,7 @@ CSV also works.
 
 **Sample data**
 A tiny sample dataset is included at data/sample.csv for quick tests and CI runs.
+**Note:** The website’s “success rate” is computed against its official dataset. Our data/sample.csv is synthetic and used only for smoke testing/CI, so its banner % is arbitrary. Use data/challenge.xlsx to see 100% (70/70).
 
 ### 3) Run
 **Headed sample data run:**
