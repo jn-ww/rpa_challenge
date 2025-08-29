@@ -15,15 +15,21 @@ def main():
     )
     args = parser.parse_args()
 
+    # Cleaner console: just the message for INFO/WARNING; full format for DEBUG+
+    fmt = (
+        "%(message)s"
+        if args.log_level in {"INFO", "WARNING"}
+        else "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    if args.perf:
-        logging.getLogger().setLevel(logging.WARNING)
 
+    # Run; automation logs a single summary line at the end
     run_rpa_challenge(file_path=args.file, headless=args.headless, perf_mode=args.perf)
+
 
 
 if __name__ == "__main__":
