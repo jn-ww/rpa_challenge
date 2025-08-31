@@ -26,7 +26,7 @@ The bot reads data from a spreadsheet (Excel or CSV) and fills 10 rounds of form
 ### 1) Clone & create environment
 ```bash
 git clone https://github.com/jn-ww/rpa_challenge.git
-cd rpa-challenge
+cd rpa_challenge
 
 # virtual environment
 python -m venv .venv
@@ -71,7 +71,7 @@ python -m src.main --file data/challenge.xlsx --headless --perf
 ```
 
 ### 4) Docker (optional)
-Run the challenge headless inside a container. Artifacts are saved to ./screenshots/
+Run the challenge headless inside a container. Docker image is named rpa-challenge (hyphen). The repository directory is rpa_challenge (underscore). Artifacts are saved to ./screenshots/
 ```bash
 # Build the image
 docker build -t rpa-challenge .
@@ -111,7 +111,7 @@ Artifacts: after the run, check screenshots/result.png and screenshots/run_summa
 
 ## Project structure
 ```
-rpa-challenge/
+rpa_challenge/
 ├── data/
 │   ├── challenge.xlsx         # exam input
 │   └── sample.csv             # sample dataset included for quick runs & CI
