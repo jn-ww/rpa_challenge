@@ -38,11 +38,24 @@ jobs:
         run: |
           pip install -r requirements.txt
           python -m playwright install --with-deps
+
+      - name: Run tests
+        run: pytest -q
+        
       - name: Run challenge (headless) on sample data
         run: |
           mkdir -p screenshots
           python -m src.main --file data/sample.csv --headless --log-level WARNING
           [ -f screenshots/run_summary.json ] && cat screenshots/run_summary.json || true
+      
+      - name: Upload trace (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace
+          path: screenshots/trace.zip
+          if-no-files-found: ignore
+      
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
         with:
