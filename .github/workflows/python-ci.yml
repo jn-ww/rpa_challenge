@@ -39,8 +39,13 @@ jobs:
           pip install -r requirements.txt
           python -m playwright install --with-deps
 
-      - name: Run tests
+      - name: Run tests (if any)
+        if: ${{ hashFiles('tests/**/*.py') != '' }}
         run: pytest -q
+
+      - name: Note:no tests found, skipping pytest
+        if: ${{ hashFiles('tests/**/*.py') == '' }}
+        run: echo "No tests found in this branch."
         
       - name: Run challenge (headless) on sample data
         run: |
