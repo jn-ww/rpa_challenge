@@ -1,4 +1,4 @@
-# Digital Workforce – Python RPA Challenge
+# Python RPA Challenge
 
 ![CI (Python + Playwright)](https://github.com/jn-ww/rpa_challenge/actions/workflows/python-ci.yml/badge.svg)
 
