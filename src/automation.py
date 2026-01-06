@@ -79,6 +79,8 @@ def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = 
     # Make sure screenshot directory exists
     Path("screenshots").mkdir(exist_ok=True)
 
+    elapsed=0.0
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
 
@@ -97,43 +99,75 @@ def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = 
             context.set_default_timeout(2500)
             log.warning("PERF mode: blocking images/media/fonts; tighter element waits")
 
-        page = context.new_page()
+        failed = False
+        context.tracing.start(screenshots=True, snapshots=True, sources=True)
 
-        # Try normal DOMContentLoaded; if slow, retry with commit + Wait for Start
+        page = None
+
         try:
-            page.goto(URL, wait_until="domcontentloaded", timeout=30000)
-        except PWTimeoutError:
-            log.warning("Navigation slow; retrying with commit + Start wait")
-            page.goto(URL, wait_until="commit", timeout=45000)
-            page.get_by_role("button", name="Start").wait_for(timeout=30000)
+            page = context.new_page()
 
-        # Ensure Start is visible then begin
-        page.get_by_role("button", name="Start").click()
+            # Try normal DOMContentLoaded; if slow, retry with commit + Wait for Start
+            try:
+                page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+            except PWTimeoutError:
+                log.warning("Navigation slow; retrying with commit + Start wait")
+                page.goto(URL, wait_until="commit", timeout=45000)
+                page.get_by_role("button", name="Start").wait_for(timeout=30000)
 
-        # Start measuring at first round; stop at final Submit
-        start = time.perf_counter()
-        for i, row in enumerate(rows, 1):
-            _fill_round(page, row, timeout_ms=round_timeout)
-            # After submit, wait until first-name clears (next round ready), except after last
-            if i != len(rows):
-                page.wait_for_function(
-                    '() => (document.querySelector(\'input[ng-reflect-name="labelFirstName"]\')?.value || "") === ""',
-                    timeout=round_timeout,
-                )
-        elapsed = time.perf_counter() - start
+            # Ensure Start is visible then begin
+            page.get_by_role("button", name="Start").click()
 
-        # Screenshot of results
-        page.screenshot(path="screenshots/result.png", full_page=True)
+            # Start measuring at first round; stop at final Submit
+            start = time.perf_counter()
+            for i, row in enumerate(rows, 1):
+                _fill_round(page, row, timeout_ms=round_timeout)
+                # After submit, wait until first-name clears (next round ready), except after last
+                if i != len(rows):
+                    page.wait_for_function(
+                        '() => (document.querySelector(\'input[ng-reflect-name="labelFirstName"]\')?.value || "") === ""',
+                        timeout=round_timeout,
+                    )
+            elapsed = time.perf_counter() - start
 
-        # Try to read the site's banner time (nice to report)
-        site_timer = ""
-        try:
-            txt = page.locator(".message2, .congratulations").first.text_content(timeout=2000)
-            site_timer = (txt or "").strip()
+            # Screenshot of results
+            page.screenshot(path="screenshots/result.png", full_page=True)
+
+            # Try to read the site's banner time (nice to report)
+            site_timer = ""
+            try:
+                txt = page.locator(".message2, .congratulations").first.text_content(timeout=2000)
+                site_timer = (txt or "").strip()
+            except Exception:
+                pass
+
         except Exception:
-            pass
+            failed = True
+            # Best-effort error screenshot for debugging
+            try:
+                if page:
+                    page.screenshot(path="screenshots/error.png", full_page=True)
+            except Exception:
+                pass
+            raise
 
-        browser.close()
+        finally:
+            # Save trace on failure (for CI artifacts), always clean up
+            try:
+                if failed:
+                    context.tracing.stop(path="screenshots/trace.zip")
+                else:
+                    context.tracing.stop()
+            except Exception:
+                pass
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     summary = {
         "ok": True,
