@@ -75,13 +75,26 @@ def run_rpa_challenge(file_path: str, headless: bool = False, perf_mode: bool = 
         raise SystemExit(f"No rows found in {file_path}")
 
     round_timeout = 5000 if perf_mode else 10000
+    
+    # Make sure screenshot directory exists
     Path("screenshots").mkdir(exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
-        context = browser.new_context(viewport={"width": 1024, "height": 768})
+
+        # Smaller viewport reduces layout/paint cost, keep scale = 1 for speed
+        context = browser.new_context(viewport={"width": 900, "height": 650}, device_scale_factor=1)
+
         if perf_mode:
-            _enable_perf_routes(context)
+            _enable_perf_routes(context) # block images/media/fonts
+            # Kill animations/transitions to avoid needless frames
+            context.add_init_script("""
+            const s = document.createElement('style');
+            s.textContent='*,*::before,*::after{animation:none!important;transition:none!important}';
+            document.head.appendChild(s);
+            """)
+            # Slightly tighter defaults; still generous for reliability
+            context.set_default_timeout(2500)
             log.warning("PERF mode: blocking images/media/fonts; tighter element waits")
 
         page = context.new_page()
